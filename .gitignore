@@ -3,3 +3,4 @@
 /data/
 /oct_model.pth
 /.venv/
+/resnet50_model.pth
