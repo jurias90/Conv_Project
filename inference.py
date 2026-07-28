@@ -6,10 +6,10 @@ import torch.nn as nn
 
 # Rebuild the architecture (empty, no weights yet)
 model = models.vgg16()
-model.classifier[6] = nn.Linear(4096, 4)
+model.classifier[6] = nn.Linear(4096, 5)
 
 # Load your saved weights into it
-model.load_state_dict(torch.load('oct_model.pth'))
+model.load_state_dict(torch.load('oct_5class_model.pth'))
 model.eval()  # inference mode, no training
 
 # Define same transform as training
@@ -26,7 +26,7 @@ transform = transforms.Compose([
 image = Image.open('new_scan.jpg').convert('RGB')
 tensor = transform(image).unsqueeze(0)  # add batch dimension
 
-classes = ['CNV', 'DME', 'DRUSEN', 'NORMAL']
+classes = ['CNV', 'DME', 'DRUSEN', 'NORMAL','NON_OCT']
 
 with torch.no_grad():
     output = model(tensor)
