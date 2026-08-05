@@ -30,4 +30,5 @@ __MACOSX/
 kaggle.json
 
 # Generated plots — optional, include if you want them on GitHub
-# results/
+# results/.idea/
+.idea/
