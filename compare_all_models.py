@@ -216,12 +216,12 @@ def main():
     ]
 
     accuracies = [
-        98.86,   # VGG16 4-class transfer
-        99.69,   # ResNet50 4-class transfer
-        97.07,   # VGG16 5-class transfer
-        96.53,   # ResNet50 5-class transfer
-        0,       # VGG16 5-class scratch (fill after training)
-        0,       # ResNet50 5-class scratch (fill after training)
+        98.86,  # VGG16 4-class transfer
+        99.69,  # ResNet50 4-class transfer
+        97.07,  # VGG16 5-class transfer
+        96.53,  # ResNet50 5-class transfer
+        37.64,  # VGG16 5-class scratch  ← was 0
+        97.04,  # ResNet50 5-class scratch ← was 0
     ]
 
     colors = [
