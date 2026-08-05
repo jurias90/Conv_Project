@@ -36,11 +36,11 @@ across four experimental conditions:
 ### 5-class Models (OCT + NOT_OCT rejection)
 
 | Model | Test Accuracy | NOT_OCT Rejection | Notes |
-|-------|--------------|-------------------|-------|
-| **VGG16 Transfer Learning** | **97.07%** | **100%** | Block5 unfrozen |
-| **ResNet50 Transfer Learning** | **96.53%** | **100%** | Layer4 unfrozen |
-| VGG16 From Scratch | TBD | TBD | 20 epochs, no pretrained weights |
-| ResNet50 From Scratch | TBD | TBD | 20 epochs, no pretrained weights |
+|-------|---------------|-------------------|------|
+| **VGG16 Transfer Learning** | **97.07%**    | **100%**          | Block5 unfrozen |
+| **ResNet50 Transfer Learning** | **96.53%**    | **100%**          | Layer4 unfrozen |
+| VGG16 From Scratch | 37.64%        | 0%                | Class collapse — predicts CNV only |
+| ResNet50 From Scratch | 97.04%        | ~100%             | Skip connections enable learning |
 
 ### Per-Class Accuracy (5-class Transfer Learning)
 
@@ -107,8 +107,8 @@ across four experimental conditions:
 | 7 | ResNet50 layer4 unfrozen | ImageNet | 5 | 96.53% |
 | 8 | VGG16 4-class (clean run) | ImageNet | 4 | 98.86% |
 | 9 | ResNet50 4-class (clean run) | ImageNet | 4 | 99.69% |
-| 10 | VGG16 from scratch | None | 5 | TBD |
-| 11 | ResNet50 from scratch | None | 5 | TBD |
+| 10 | VGG16 from scratch   | None | 5 | 37.64% (class collapse)         |
+| 11 | ResNet50 from scratch | None | 5 | 97.04% (near transfer learning) |
 
 ---
 
