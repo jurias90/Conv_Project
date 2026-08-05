@@ -9,7 +9,7 @@ model = models.vgg16()
 model.classifier[6] = nn.Linear(4096, 5)
 
 # Load your saved weights into it
-model.load_state_dict(torch.load('oct_5class_model.pth'))
+model.load_state_dict(torch.load('../weights/oct_5class_model.pth'))
 model.eval()  # inference mode, no training
 
 # Define same transform as training
@@ -23,7 +23,7 @@ transform = transforms.Compose([
 ])
 
 # Load one new OCT image and get a diagnosis
-image = Image.open('new_scan.jpg').convert('RGB')
+image = Image.open('../new_scan.jpg').convert('RGB')
 tensor = transform(image).unsqueeze(0)  # add batch dimension
 
 classes = ['CNV', 'DME', 'DRUSEN', 'NORMAL','NON_OCT']
