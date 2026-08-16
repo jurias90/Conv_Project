@@ -1,4 +1,9 @@
+# resnet50_5class_train.py
+# ResNet50 5-class — TRANSFER LEARNING (pretrained ImageNet weights)
+# Classes: CNV, DME, DRUSEN, NORMAL, NOT_OCT
+
 import os
+import json
 import ssl
 import certifi
 import torch
@@ -11,17 +16,14 @@ from sklearn.metrics import confusion_matrix, classification_report
 import matplotlib.pyplot as plt
 import numpy as np
 
-# SSL fix — works on Mac, Linux, and Windows
 os.environ['SSL_CERT_FILE'] = certifi.where()
 os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
-# ─────────────────────────────────────────
-# PATHS — update BASE if project moves
-# ─────────────────────────────────────────
 BASE     = "/home/dantails/PycharmProjects/Conv_Project"
 DATA_DIR = f"{BASE}/combined_data"
 WEIGHTS  = f"{BASE}/weights/resnet50_5class.pth"
 CM_PATH  = f"{BASE}/results/confusion_matrix_resnet50_5class.png"
+LOG_PATH = f"{BASE}/results/resnet50_5class_transfer_log.json"
 
 
 def get_device():
@@ -37,10 +39,8 @@ def main():
     print(f"Using device: {device}")
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
+    print("MODE: ResNet50 5-class Transfer Learning")
 
-    # ─────────────────────────────────────────
-    # SECTION 2: Data loading
-    # ─────────────────────────────────────────
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -70,23 +70,16 @@ def main():
                               shuffle=False, num_workers=0,
                               pin_memory=torch.cuda.is_available())
 
-    print(f"Train: {len(train_data)} images")
-    print(f"Val:   {len(val_data)} images")
-    print(f"Test:  {len(test_data)} images")
+    print(f"Train: {len(train_data)} | Val: {len(val_data)} | "
+          f"Test: {len(test_data)}")
     print(f"Classes: {full_data.classes}")
 
-    # ─────────────────────────────────────────
-    # SECTION 3: Model setup
-    # ─────────────────────────────────────────
     model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
-
     for param in model.parameters():
         param.requires_grad = False
-
     for name, param in model.named_parameters():
         if 'layer4' in name:
             param.requires_grad = True
-
     model.fc = nn.Linear(2048, 5)
     model = model.to(device)
 
@@ -95,9 +88,6 @@ def main():
     total     = sum(p.numel() for p in model.parameters())
     print(f"Trainable params: {trainable:,} / {total:,}")
 
-    # ─────────────────────────────────────────
-    # SECTION 4: Training loop
-    # ─────────────────────────────────────────
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam([
         {'params': model.fc.parameters(), 'lr': 0.001},
@@ -109,16 +99,19 @@ def main():
     )
 
     EPOCHS = 10
+    training_log = {
+        'train_acc': [], 'val_acc': [],
+        'train_loss': [], 'val_loss': [],
+        'mode': 'transfer_learning', 'architecture': 'resnet50_5class'
+    }
 
     for epoch in range(EPOCHS):
         model.train()
         train_loss = 0
         train_correct = 0
-
         train_bar = tqdm(train_loader,
                          desc=f"Epoch {epoch+1}/{EPOCHS} [Train]",
                          leave=True)
-
         for images, labels in train_bar:
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
@@ -136,11 +129,9 @@ def main():
         model.eval()
         val_loss = 0
         val_correct = 0
-
         val_bar = tqdm(val_loader,
                        desc=f"Epoch {epoch+1}/{EPOCHS} [Val]  ",
                        leave=True)
-
         with torch.no_grad():
             for images, labels in val_bar:
                 images, labels = images.to(device), labels.to(device)
@@ -153,22 +144,27 @@ def main():
                     'acc':  f"{val_correct/((val_bar.n+1)*32):.4f}"
                 })
 
+        epoch_train_acc  = train_correct/len(train_data)
+        epoch_val_acc    = val_correct/len(val_data)
+        epoch_train_loss = train_loss/len(train_loader)
+        epoch_val_loss   = val_loss/len(val_loader)
+
+        training_log['train_acc'].append(epoch_train_acc)
+        training_log['val_acc'].append(epoch_val_acc)
+        training_log['train_loss'].append(epoch_train_loss)
+        training_log['val_loss'].append(epoch_val_loss)
+
         print(f"\nEpoch {epoch+1}/{EPOCHS} Summary | "
-              f"Train acc: {train_correct/len(train_data):.4f} | "
-              f"Val acc: {val_correct/len(val_data):.4f} | "
-              f"Train loss: {train_loss/len(train_loader):.4f} | "
-              f"Val loss: {val_loss/len(val_loader):.4f}\n",
-              flush=True)
+              f"Train acc: {epoch_train_acc:.4f} | "
+              f"Val acc: {epoch_val_acc:.4f} | "
+              f"Train loss: {epoch_train_loss:.4f} | "
+              f"Val loss: {epoch_val_loss:.4f}\n", flush=True)
 
-        scheduler.step(val_loss / len(val_loader))
+        scheduler.step(epoch_val_loss)
 
-    # ─────────────────────────────────────────
-    # SECTION 5: Evaluation + Confusion Matrix
-    # ─────────────────────────────────────────
     model.eval()
     test_correct = 0
-    all_preds    = []
-    all_labels   = []
+    all_preds, all_labels = [], []
 
     with torch.no_grad():
         for images, labels in test_loader:
@@ -203,12 +199,10 @@ def main():
     ax.figure.colorbar(im, ax=ax)
     ax.set(xticks=np.arange(cm.shape[1]),
            yticks=np.arange(cm.shape[0]),
-           xticklabels=classes,
-           yticklabels=classes,
-           title=f'ResNet50 5-class — {final_acc:.2%} Test Accuracy\n'
+           xticklabels=classes, yticklabels=classes,
+           title=f'ResNet50 5-class Transfer — {final_acc:.2%}\n'
                  f'NOT_OCT Rejection: 100%',
-           ylabel='True label',
-           xlabel='Predicted label')
+           ylabel='True label', xlabel='Predicted label')
     plt.setp(ax.get_xticklabels(), rotation=45,
              ha="right", rotation_mode="anchor")
     for i in range(cm.shape[0]):
@@ -219,10 +213,17 @@ def main():
                     else "black")
     plt.tight_layout()
     plt.savefig(CM_PATH, dpi=150)
-    print(f"Confusion matrix saved to {CM_PATH}")
+    print(f"Confusion matrix saved: {CM_PATH}")
+
+    training_log['final_test_acc'] = final_acc
+    training_log['test_correct']   = test_correct
+    training_log['test_total']     = len(test_data)
+    with open(LOG_PATH, 'w') as f:
+        json.dump(training_log, f, indent=2)
+    print(f"Training log saved: {LOG_PATH}")
 
     torch.save(model.state_dict(), WEIGHTS)
-    print(f"Weights saved to {WEIGHTS}")
+    print(f"Weights saved: {WEIGHTS}")
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@ venv/
 
 # All data folders — too large for GitHub
 data/
-not_oct_data/
+data/not_oct_data/
 combined_data/
 
 # Model weights — too large for GitHub

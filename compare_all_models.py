@@ -1,291 +1,373 @@
 # compare_all_models.py
-# Generates all comparison plots showing transfer learning vs scratch
-# Run AFTER all four training logs exist in results/
+# Automatically reads all JSON training logs from results/
+# and generates all comparison plots.
+#
+# Fully automatic — no manual data entry needed.
+# Just run after training completes:
+#   python compare_all_models.py
 
 import json
 import os
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
+from pathlib import Path
 
-BASE = "/home/dantails/PycharmProjects/Conv_Project"
+BASE    = "/home/dantails/PycharmProjects/Conv_Project"
 RESULTS = f"{BASE}/results"
 
+# ─────────────────────────────────────────
+# Display order for bar chart
+# Add new models here if you add more architectures
+# ─────────────────────────────────────────
+DISPLAY_ORDER = [
+    ('alexnet_5class_transfer_log',  'AlexNet\nTransfer'),
+    ('vgg16_5class_transfer_log',    'VGG16\nTransfer'),
+    ('resnet50_5class_transfer_log', 'ResNet50\nTransfer'),
+    ('alexnet_5class_scratch_log',   'AlexNet\nScratch'),
+    ('vgg16_5class_scratch_log',     'VGG16\nScratch'),
+    ('resnet50_5class_scratch_log',  'ResNet50\nScratch'),
+]
 
-def load_log(filename):
-    path = f"{RESULTS}/{filename}"
-    if not os.path.exists(path):
-        print(f"WARNING: {filename} not found — run training first")
-        return None
-    with open(path) as f:
-        return json.load(f)
+# Color per architecture — consistent across all plots
+ARCH_COLORS = {
+    'alexnet':  '#e67e22',  # orange
+    'vgg16':    '#2980b9',  # blue
+    'resnet50': '#27ae60',  # green
+}
+
+# Reference lines — published benchmarks
+REFERENCES = [
+    (0.966,  'orange',  'Kermany 2018 (96.6%)'),
+    (0.9519, 'purple',  'Published VGG16 2025 (95.19%)'),
+]
+
+
+def load_all_logs():
+    """Auto-discover and load all *_log.json files in results/"""
+    logs = {}
+    json_files = sorted(Path(RESULTS).glob("*_log.json"))
+    if not json_files:
+        print(f"No JSON logs found in {RESULTS}")
+        return logs
+    for path in json_files:
+        with open(path) as f:
+            data = json.load(f)
+        logs[path.stem] = data
+        epochs    = len(data.get('val_acc', []))
+        final_acc = data.get('final_test_acc')
+        acc_str   = f"{final_acc:.4f}" if final_acc else "no final_test_acc"
+        print(f"  Loaded: {path.name} — {epochs} epochs — {acc_str}")
+    return logs
+
+
+def get_arch_color(key):
+    """Get color based on architecture name in key."""
+    for arch, color in ARCH_COLORS.items():
+        if arch in key:
+            return color
+    return '#888888'
+
+
+def get_linestyle(key):
+    """Solid for transfer, dashed for scratch."""
+    return '--' if 'scratch' in key else '-'
+
+
+def get_marker(key):
+    """Circle for transfer, square for scratch."""
+    return 's' if 'scratch' in key else 'o'
+
+
+def get_label(key):
+    """Clean display label from log key."""
+    labels = {
+        'alexnet_5class_transfer_log':   'AlexNet Transfer',
+        'alexnet_5class_scratch_log':    'AlexNet Scratch',
+        'vgg16_5class_transfer_log':     'VGG16 Transfer',
+        'vgg16_5class_scratch_log':      'VGG16 Scratch',
+        'resnet50_5class_transfer_log':  'ResNet50 Transfer',
+        'resnet50_5class_scratch_log':   'ResNet50 Scratch',
+        'alexnet_4class_transfer_log':   'AlexNet 4-class Transfer',
+        'vgg16_4class_transfer_log':     'VGG16 4-class Transfer',
+        'resnet50_4class_transfer_log':  'ResNet50 4-class Transfer',
+    }
+    return labels.get(key, key.replace('_log', '')
+                              .replace('_', ' ').title())
+
+
+def get_final_acc(log):
+    """
+    Get final test accuracy from log.
+    Tries final_test_acc first (auto-saved by new training scripts).
+    Falls back to best val_acc if not present (old runs).
+    """
+    if 'final_test_acc' in log:
+        return log['final_test_acc'], 'test'
+    if log.get('val_acc'):
+        return max(log['val_acc']), 'val_best'
+    return None, None
 
 
 def main():
+    print("=" * 60)
+    print("Loading training logs...")
+    print("=" * 60)
+    logs = load_all_logs()
 
-    # Load all logs
-    vgg16_tl     = load_log("vgg16_5class_transfer_log.json")
-    resnet50_tl  = load_log("resnet50_5class_transfer_log.json")
-    vgg16_sc     = load_log("vgg16_5class_scratch_log.json")
-    resnet50_sc  = load_log("resnet50_5class_scratch_log.json")
+    if not logs:
+        print("No logs found — run training scripts first.")
+        return
 
-    # ─────────────────────────────────────────
-    # PLOT 1: Transfer Learning vs Scratch
-    # VGG16 side by side
-    # ─────────────────────────────────────────
-    if vgg16_tl and vgg16_sc:
-        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    os.makedirs(RESULTS, exist_ok=True)
 
-        tl_epochs = list(range(1, len(vgg16_tl['val_acc']) + 1))
-        sc_epochs = list(range(1, len(vgg16_sc['val_acc']) + 1))
+    # Separate transfer vs scratch for targeted plots
+    transfer_keys = [k for k in logs if 'transfer' in k]
+    scratch_keys  = [k for k in logs if 'scratch'  in k]
 
-        # Val accuracy
-        axes[0].plot(tl_epochs, vgg16_tl['val_acc'],
-                    'b-o', label='Transfer Learning', linewidth=2.5)
-        axes[0].plot(sc_epochs, vgg16_sc['val_acc'],
-                    'r--s', label='From Scratch', linewidth=2.5)
-        axes[0].axhline(y=0.966, color='orange', linestyle=':',
-                       linewidth=1.5, label='Kermany 2018 (96.6%)')
-        axes[0].set_title('Validation Accuracy', fontweight='bold',
-                          fontsize=13)
-        axes[0].set_xlabel('Epoch', fontsize=11)
-        axes[0].set_ylabel('Accuracy', fontsize=11)
-        axes[0].set_ylim(0.15, 1.05)
-        axes[0].legend(fontsize=10)
-        axes[0].grid(alpha=0.3)
-
-        # Val loss
-        axes[1].plot(tl_epochs, vgg16_tl['val_loss'],
-                    'b-o', label='Transfer Learning', linewidth=2.5)
-        axes[1].plot(sc_epochs, vgg16_sc['val_loss'],
-                    'r--s', label='From Scratch', linewidth=2.5)
-        axes[1].set_title('Validation Loss', fontweight='bold',
-                          fontsize=13)
-        axes[1].set_xlabel('Epoch', fontsize=11)
-        axes[1].set_ylabel('Loss', fontsize=11)
-        axes[1].legend(fontsize=10)
-        axes[1].grid(alpha=0.3)
-
-        fig.suptitle(
-            'VGG16 5-class: Transfer Learning vs Training from Scratch\n'
-            'Same architecture, same data, same training setup',
-            fontsize=14, fontweight='bold'
-        )
-        plt.tight_layout()
-        out = f"{RESULTS}/compare_vgg16_transfer_vs_scratch.png"
-        plt.savefig(out, dpi=150)
-        plt.close()
-        print(f"Saved: {out}")
+    print(f"\nTransfer learning logs: {len(transfer_keys)}")
+    print(f"From scratch logs:      {len(scratch_keys)}")
 
     # ─────────────────────────────────────────
-    # PLOT 2: Transfer Learning vs Scratch
-    # ResNet50 side by side
-    # ─────────────────────────────────────────
-    if resnet50_tl and resnet50_sc:
-        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-
-        tl_epochs = list(range(1, len(resnet50_tl['val_acc']) + 1))
-        sc_epochs = list(range(1, len(resnet50_sc['val_acc']) + 1))
-
-        axes[0].plot(tl_epochs, resnet50_tl['val_acc'],
-                    'g-o', label='Transfer Learning', linewidth=2.5)
-        axes[0].plot(sc_epochs, resnet50_sc['val_acc'],
-                    'r--s', label='From Scratch', linewidth=2.5)
-        axes[0].axhline(y=0.966, color='orange', linestyle=':',
-                       linewidth=1.5, label='Kermany 2018 (96.6%)')
-        axes[0].set_title('Validation Accuracy', fontweight='bold',
-                          fontsize=13)
-        axes[0].set_xlabel('Epoch', fontsize=11)
-        axes[0].set_ylabel('Accuracy', fontsize=11)
-        axes[0].set_ylim(0.15, 1.05)
-        axes[0].legend(fontsize=10)
-        axes[0].grid(alpha=0.3)
-
-        axes[1].plot(tl_epochs, resnet50_tl['val_loss'],
-                    'g-o', label='Transfer Learning', linewidth=2.5)
-        axes[1].plot(sc_epochs, resnet50_sc['val_loss'],
-                    'r--s', label='From Scratch', linewidth=2.5)
-        axes[1].set_title('Validation Loss', fontweight='bold',
-                          fontsize=13)
-        axes[1].set_xlabel('Epoch', fontsize=11)
-        axes[1].set_ylabel('Loss', fontsize=11)
-        axes[1].legend(fontsize=10)
-        axes[1].grid(alpha=0.3)
-
-        fig.suptitle(
-            'ResNet50 5-class: Transfer Learning vs Training from Scratch\n'
-            'Same architecture, same data, same training setup',
-            fontsize=14, fontweight='bold'
-        )
-        plt.tight_layout()
-        out = f"{RESULTS}/compare_resnet50_transfer_vs_scratch.png"
-        plt.savefig(out, dpi=150)
-        plt.close()
-        print(f"Saved: {out}")
-
-    # ─────────────────────────────────────────
-    # PLOT 3: All 6 models — val accuracy
-    # The poster's main comparison graph
+    # PLOT 1: All models — val accuracy + loss
     # ─────────────────────────────────────────
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 12))
+    fig.patch.set_facecolor('white')
 
-    # Colors and styles
-    styles = {
-        'vgg16_tl': ('b', '-', 'o', 'VGG16 Transfer Learning'),
-        'resnet50_tl': ('g', '-', '^', 'ResNet50 Transfer Learning'),
-        'vgg16_sc': ('b', '--', 's', 'VGG16 From Scratch'),
-        'resnet50_sc': ('g', '--', 'D', 'ResNet50 From Scratch'),
-    }
-
-    logs = {
-        'vgg16_tl': vgg16_tl,
-        'resnet50_tl': resnet50_tl,
-        'vgg16_sc': vgg16_sc,
-        'resnet50_sc': resnet50_sc,
-    }
-
-    for key, log in logs.items():
-        if log is None:
+    for key, log in sorted(logs.items()):
+        if 'val_acc' not in log or not log['val_acc']:
             continue
-        color, linestyle, marker, label = styles[key]
+        color  = get_arch_color(key)
+        ls     = get_linestyle(key)
+        marker = get_marker(key)
+        label  = get_label(key)
+        alpha  = 0.6 if 'scratch' in key else 1.0
         epochs = list(range(1, len(log['val_acc']) + 1))
 
         ax1.plot(epochs, log['val_acc'],
-                 color=color, linestyle=linestyle,
-                 marker=marker, label=label,
-                 linewidth=2.5, markersize=6)
+                color=color, linestyle=ls,
+                marker=marker, label=label,
+                linewidth=2, markersize=5, alpha=alpha)
 
-        ax2.plot(epochs, log['val_loss'],
-                 color=color, linestyle=linestyle,
-                 marker=marker, label=label,
-                 linewidth=2.5, markersize=6)
+    for y, color, label in REFERENCES:
+        ax1.axhline(y=y, color=color, linestyle=':',
+                   linewidth=2, label=label)
 
-    # Reference lines on accuracy plot
-    ax1.axhline(y=0.966, color='orange', linestyle=':',
-                linewidth=2, label='Kermany 2018 (96.6%)')
-    ax1.axhline(y=0.9519, color='purple', linestyle=':',
-                linewidth=2, label='Published VGG16 paper (95.19%)')
+    # Vertical line where transfer learning stops
+    ax1.axvline(x=10, color='gray', linestyle=':',
+               linewidth=1.5, alpha=0.5)
+    ax1.text(10.2, 0.20,
+             'Transfer\nlearning\nstops\n(epoch 10)',
+             fontsize=8, color='gray')
 
     ax1.set_title('Validation Accuracy Per Epoch — All Models',
                   fontsize=14, fontweight='bold')
     ax1.set_xlabel('Epoch', fontsize=12)
     ax1.set_ylabel('Validation Accuracy', fontsize=12)
     ax1.set_ylim(0.15, 1.05)
-    ax1.legend(fontsize=10, loc='lower right')
+    ax1.legend(fontsize=9, loc='lower right', ncol=2)
     ax1.grid(alpha=0.3)
-    ax1.axvline(x=10, color='gray', linestyle=':',
-                linewidth=1, alpha=0.5,
-                label='Transfer learning stops here')
-    ax1.text(10.2, 0.2, 'Transfer\nlearning\nstops',
-             fontsize=9, color='gray')
 
+    for key, log in sorted(logs.items()):
+        if 'val_loss' not in log or not log['val_loss']:
+            continue
+        color  = get_arch_color(key)
+        ls     = get_linestyle(key)
+        marker = get_marker(key)
+        label  = get_label(key)
+        alpha  = 0.6 if 'scratch' in key else 1.0
+        epochs = list(range(1, len(log['val_loss']) + 1))
+
+        ax2.plot(epochs, log['val_loss'],
+                color=color, linestyle=ls,
+                marker=marker, label=label,
+                linewidth=2, markersize=5, alpha=alpha)
+
+    ax2.axvline(x=10, color='gray', linestyle=':',
+               linewidth=1.5, alpha=0.5)
     ax2.set_title('Validation Loss Per Epoch — All Models',
                   fontsize=14, fontweight='bold')
     ax2.set_xlabel('Epoch', fontsize=12)
     ax2.set_ylabel('Validation Loss', fontsize=12)
-    ax2.legend(fontsize=10, loc='upper right')
+    ax2.legend(fontsize=9, loc='upper right', ncol=2)
     ax2.grid(alpha=0.3)
-    ax2.axvline(x=10, color='gray', linestyle=':',
-                linewidth=1, alpha=0.5)
 
     fig.suptitle(
-        'Transfer Learning vs Training from Scratch\n'
-        'VGG16 and ResNet50 on OCT Retinal Classification (5-class)',
+        'Transfer Learning vs From Scratch\n'
+        'AlexNet, VGG16, ResNet50 — OCT Retinal Classification',
         fontsize=15, fontweight='bold'
     )
-
     plt.tight_layout()
     out = f"{RESULTS}/compare_all_training_curves.png"
-    plt.savefig(out, dpi=150)
+    plt.savefig(out, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"Saved: {out}")
+    print(f"\nSaved: {out}")
 
     # ─────────────────────────────────────────
-    # PLOT 4: Final accuracy bar chart
-    # All models compared at a glance
+    # PLOT 2: Per-architecture transfer vs scratch
     # ─────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(14, 7))
+    for arch in ['alexnet', 'vgg16', 'resnet50']:
+        tl_key = f"{arch}_5class_transfer_log"
+        sc_key = f"{arch}_5class_scratch_log"
 
-    models = [
-        'VGG16\n4-class\nTransfer',
-        'ResNet50\n4-class\nTransfer',
-        'VGG16\n5-class\nTransfer',
-        'ResNet50\n5-class\nTransfer',
-        'VGG16\n5-class\nScratch',
-        'ResNet50\n5-class\nScratch',
-    ]
+        if tl_key not in logs and sc_key not in logs:
+            continue
 
-    accuracies = [
-        98.86,  # VGG16 4-class transfer
-        99.69,  # ResNet50 4-class transfer
-        97.07,  # VGG16 5-class transfer
-        96.53,  # ResNet50 5-class transfer
-        37.64,  # VGG16 5-class scratch  ← was 0
-        97.04,  # ResNet50 5-class scratch ← was 0
-    ]
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        color = ARCH_COLORS.get(arch, '#888888')
 
-    colors = [
-        '#1565c0',   # blue — transfer
-        '#1565c0',   # blue — transfer
-        '#1976d2',   # lighter blue — transfer 5-class
-        '#1976d2',   # lighter blue — transfer 5-class
-        '#d32f2f',   # red — scratch
-        '#d32f2f',   # red — scratch
-    ]
+        if tl_key in logs:
+            tl  = logs[tl_key]
+            ep  = list(range(1, len(tl['val_acc']) + 1))
+            acc, src = get_final_acc(tl)
+            lbl = f"Transfer Learning ({acc:.2%} {src})" \
+                  if acc else "Transfer Learning"
+            ax1.plot(ep, tl['val_acc'], color=color,
+                    linestyle='-', marker='o',
+                    label=lbl, linewidth=2.5)
+            ax2.plot(ep, tl['val_loss'], color=color,
+                    linestyle='-', marker='o',
+                    label='Transfer Learning', linewidth=2.5)
 
-    bars = ax.bar(models, accuracies, color=colors,
-                  edgecolor='white', width=0.6)
+        if sc_key in logs:
+            sc  = logs[sc_key]
+            ep  = list(range(1, len(sc['val_acc']) + 1))
+            acc, src = get_final_acc(sc)
+            lbl = f"From Scratch ({acc:.2%} {src})" \
+                  if acc else "From Scratch"
+            ax1.plot(ep, sc['val_acc'], color=color,
+                    linestyle='--', marker='s',
+                    label=lbl, linewidth=2.5, alpha=0.7)
+            ax2.plot(ep, sc['val_loss'], color=color,
+                    linestyle='--', marker='s',
+                    label='From Scratch', linewidth=2.5, alpha=0.7)
 
-    for bar, acc in zip(bars, accuracies):
-        if acc > 0:
-            ax.text(bar.get_x() + bar.get_width()/2,
-                    acc + 0.3, f'{acc}%',
-                    ha='center', va='bottom',
-                    fontweight='bold', fontsize=11)
-        else:
-            ax.text(bar.get_x() + bar.get_width()/2,
-                    5, 'TBD',
-                    ha='center', va='bottom',
-                    fontweight='bold', fontsize=11,
-                    color='white')
+        for y, ref_color, ref_label in REFERENCES:
+            ax1.axhline(y=y, color=ref_color, linestyle=':',
+                       linewidth=1.5, label=ref_label)
 
-    ax.axhline(y=96.6, color='orange', linestyle='--',
-              linewidth=2, label='Kermany 2018 (96.6%)')
-    ax.axhline(y=95.19, color='purple', linestyle='--',
-              linewidth=2, label='Published VGG16 paper (95.19%)')
+        ax1.set_title('Validation Accuracy',
+                      fontweight='bold', fontsize=13)
+        ax1.set_xlabel('Epoch', fontsize=11)
+        ax1.set_ylabel('Accuracy', fontsize=11)
+        ax1.set_ylim(0.15, 1.05)
+        ax1.legend(fontsize=9)
+        ax1.grid(alpha=0.3)
 
-    blue_patch  = mpatches.Patch(color='#1565c0',
+        ax2.set_title('Validation Loss',
+                      fontweight='bold', fontsize=13)
+        ax2.set_xlabel('Epoch', fontsize=11)
+        ax2.set_ylabel('Loss', fontsize=11)
+        ax2.legend(fontsize=9)
+        ax2.grid(alpha=0.3)
+
+        fig.suptitle(
+            f'{arch.upper()} — Transfer Learning vs From Scratch\n'
+            f'OCT Retinal Classification (5-class)',
+            fontsize=14, fontweight='bold'
+        )
+        plt.tight_layout()
+        out = f"{RESULTS}/compare_{arch}_transfer_vs_scratch.png"
+        plt.savefig(out, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"Saved: {out}")
+
+    # ─────────────────────────────────────────
+    # PLOT 3: Final accuracy bar chart
+    # Auto-reads from JSON logs — no manual entry
+    # ─────────────────────────────────────────
+    bar_labels   = []
+    bar_accs     = []
+    bar_colors   = []
+    bar_alphas   = []
+    acc_sources  = []
+
+    for key, label in DISPLAY_ORDER:
+        if key not in logs:
+            continue
+        acc, src = get_final_acc(logs[key])
+        if acc is None:
+            continue
+        bar_labels.append(label)
+        bar_accs.append(acc * 100)
+        bar_colors.append(get_arch_color(key))
+        bar_alphas.append(0.4 if 'scratch' in key else 1.0)
+        acc_sources.append(src)
+
+    if bar_labels:
+        fig, ax = plt.subplots(figsize=(14, 7))
+
+        for i, (label, acc, color, alpha, src) in enumerate(
+                zip(bar_labels, bar_accs,
+                    bar_colors, bar_alphas, acc_sources)):
+            ax.bar(i, acc, color=color, alpha=alpha,
+                   edgecolor='white', width=0.6)
+            marker = '*' if src == 'val_best' else ''
+            ax.text(i, acc + 0.3,
+                   f'{acc:.2f}%{marker}',
+                   ha='center', va='bottom',
+                   fontweight='bold', fontsize=10)
+
+        ax.set_xticks(range(len(bar_labels)))
+        ax.set_xticklabels(bar_labels, fontsize=10)
+
+        for y, color, label in REFERENCES:
+            ax.axhline(y=y * 100, color=color,
+                      linestyle='--', linewidth=2, label=label)
+
+        # Legend
+        solid_p = mpatches.Patch(color='gray', alpha=1.0,
                                   label='Transfer Learning')
-    red_patch   = mpatches.Patch(color='#d32f2f',
+        faded_p = mpatches.Patch(color='gray', alpha=0.4,
                                   label='From Scratch')
-    ax.legend(handles=[blue_patch, red_patch,
-                       plt.Line2D([0], [0], color='orange',
-                                  linestyle='--', label='Kermany 2018'),
-                       plt.Line2D([0], [0], color='purple',
-                                  linestyle='--',
-                                  label='Published VGG16 2025')],
-              fontsize=10)
+        alex_p  = mpatches.Patch(color=ARCH_COLORS['alexnet'],
+                                  label='AlexNet')
+        vgg_p   = mpatches.Patch(color=ARCH_COLORS['vgg16'],
+                                  label='VGG16')
+        res_p   = mpatches.Patch(color=ARCH_COLORS['resnet50'],
+                                  label='ResNet50')
+        ref_patches = [
+            plt.Line2D([0],[0], color=c, linestyle='--', label=l)
+            for _, c, l in REFERENCES
+        ]
+        ax.legend(handles=[solid_p, faded_p,
+                           alex_p, vgg_p, res_p] + ref_patches,
+                  fontsize=9, ncol=2)
 
-    ax.set_ylim(0, 105)
-    ax.set_ylabel('Test Accuracy (%)', fontsize=12)
-    ax.set_title(
-        'Final Test Accuracy — All Models\n'
-        'Transfer Learning consistently outperforms training from scratch',
-        fontsize=14, fontweight='bold'
-    )
-    ax.grid(axis='y', alpha=0.3)
+        ax.set_ylim(0, 105)
+        ax.set_ylabel('Test Accuracy (%)', fontsize=12)
+        ax.set_title(
+            'Final Test Accuracy — All Models\n'
+            'Transfer Learning (solid) vs From Scratch (faded)\n'
+            '* = best val accuracy used (no final test accuracy saved)',
+            fontsize=13, fontweight='bold'
+        )
+        ax.grid(axis='y', alpha=0.3)
+        plt.tight_layout()
+        out = f"{RESULTS}/compare_final_accuracy_all.png"
+        plt.savefig(out, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"Saved: {out}")
 
-    plt.tight_layout()
-    out = f"{RESULTS}/compare_final_accuracy_all.png"
-    plt.savefig(out, dpi=150)
-    plt.close()
-    print(f"Saved: {out}")
-
-    print("\nAll comparison plots generated.")
-    print("Files saved to results/:")
+    # ─────────────────────────────────────────
+    # SUMMARY TABLE
+    # ─────────────────────────────────────────
+    print("\n" + "=" * 60)
+    print("SUMMARY — BEST ACCURACY PER MODEL")
+    print("=" * 60)
+    print(f"{'Model':<35} {'Accuracy':<12} {'Source'}")
+    print(f"{'-'*60}")
+    for key, log in sorted(logs.items()):
+        acc, src = get_final_acc(log)
+        if acc:
+            label = get_label(key)
+            print(f"  {label:<33} {acc:.4f}      {src}")
+    print("=" * 60)
+    print("\n✓ All plots saved to results/")
+    print("  compare_all_training_curves.png")
+    print("  compare_alexnet_transfer_vs_scratch.png")
     print("  compare_vgg16_transfer_vs_scratch.png")
     print("  compare_resnet50_transfer_vs_scratch.png")
-    print("  compare_all_training_curves.png")
     print("  compare_final_accuracy_all.png")
 
 

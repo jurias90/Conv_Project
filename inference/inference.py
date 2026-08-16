@@ -2,12 +2,12 @@
 # OCT Retinal Disease Classifier — Inference Script
 #
 # Usage:
-#   Single image:    python inference/inference.py path/to/image.jpg
-#   Multiple images: python inference/inference.py img1.jpg img2.jpg img3.jpg
-#   Folder:          python inference/inference.py path/to/folder/
 #   Default test:    python inference/inference.py --test
+#   Single image:    python inference/inference.py path/to/image.jpg
+#   Multiple images: python inference/inference.py img1.jpg img2.jpg
+#   Folder:          python inference/inference.py path/to/folder/
 #   Compare models:  python inference/inference.py --compare path/to/image.jpg
-#   Temperature:     python inference/inference.py --temp 2.0 path/to/image.jpg
+#   With temp scale: python inference/inference.py --temp 10.0 --compare image.jpg
 
 import os
 import sys
@@ -16,9 +16,13 @@ import certifi
 import torch
 import torch.nn as nn
 from torchvision import transforms, models
+from torchvision.models import (
+    alexnet, AlexNet_Weights,
+    vgg16, VGG16_Weights,
+    resnet50, ResNet50_Weights
+)
 from PIL import Image
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 import numpy as np
 
 os.environ['SSL_CERT_FILE'] = certifi.where()
@@ -30,14 +34,16 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 # Mac:    /Users/jesusurias/PycharmProjects/Conv_Project
 # ─────────────────────────────────────────
 BASE         = "/home/dantails/PycharmProjects/Conv_Project"
-WEIGHTS_PATH = f"{BASE}/weights/vgg16_5class.pth"
+WEIGHTS_DIR  = f"{BASE}/weights"
 TEST_IMAGES  = f"{BASE}/test_images"
 RESULTS_DIR  = f"{BASE}/results/inference"
 
-# Default temperature — tune this value:
-# T=1.0 → standard softmax (overconfident)
-# T=2.0 → moderate calibration
-# T=4.0 → high calibration (more spread)
+# Default model for standard inference mode
+DEFAULT_WEIGHTS = f"{WEIGHTS_DIR}/vgg16_5class.pth"
+DEFAULT_ARCH    = 'vgg16'
+DEFAULT_CLASSES = 5
+
+# Default temperature for calibration
 DEFAULT_TEMP = 2.0
 
 CLASSES_5 = ['CNV', 'DME', 'DRUSEN', 'NORMAL', 'NOT_OCT']
@@ -76,47 +82,64 @@ COLORS = {
     'NOT_OCT': '#757575'
 }
 
+# ─────────────────────────────────────────
+# ALL SIX MODEL CONFIGURATIONS
+# ─────────────────────────────────────────
 MODEL_CONFIGS = [
     {
-        'name':        'VGG16 4-class (transfer)',
-        'weights':     f"{BASE}/weights/vgg16_4class.pth",
-        'classes':     CLASSES_4,
-        'num_classes': 4,
-        'arch':        'vgg16'
+        'name':        'AlexNet 5-class (transfer)',
+        'weights':     f"{WEIGHTS_DIR}/alexnet_5class_transfer.pth",
+        'classes':     CLASSES_5,
+        'num_classes': 5,
+        'arch':        'alexnet'
     },
     {
         'name':        'VGG16 5-class (transfer)',
-        'weights':     f"{BASE}/weights/vgg16_5class.pth",
+        'weights':     f"{WEIGHTS_DIR}/vgg16_5class.pth",
         'classes':     CLASSES_5,
         'num_classes': 5,
         'arch':        'vgg16'
     },
     {
-        'name':        'ResNet50 4-class (transfer)',
-        'weights':     f"{BASE}/weights/resnet50_4class.pth",
-        'classes':     CLASSES_4,
-        'num_classes': 4,
-        'arch':        'resnet50'
-    },
-    {
         'name':        'ResNet50 5-class (transfer)',
-        'weights':     f"{BASE}/weights/resnet50_5class.pth",
+        'weights':     f"{WEIGHTS_DIR}/resnet50_5class.pth",
         'classes':     CLASSES_5,
         'num_classes': 5,
         'arch':        'resnet50'
     },
     {
+        'name':        'AlexNet 5-class (scratch)',
+        'weights':     f"{WEIGHTS_DIR}/alexnet_5class_scratch.pth",
+        'classes':     CLASSES_5,
+        'num_classes': 5,
+        'arch':        'alexnet'
+    },
+    {
         'name':        'VGG16 5-class (scratch)',
-        'weights':     f"{BASE}/weights/vgg16_5class_scratch.pth",
+        'weights':     f"{WEIGHTS_DIR}/vgg16_5class_scratch.pth",
         'classes':     CLASSES_5,
         'num_classes': 5,
         'arch':        'vgg16'
     },
     {
         'name':        'ResNet50 5-class (scratch)',
-        'weights':     f"{BASE}/weights/resnet50_5class_scratch.pth",
+        'weights':     f"{WEIGHTS_DIR}/resnet50_5class_scratch.pth",
         'classes':     CLASSES_5,
         'num_classes': 5,
+        'arch':        'resnet50'
+    },
+    {
+        'name':        'VGG16 4-class (transfer)',
+        'weights':     f"{WEIGHTS_DIR}/vgg16_4class.pth",
+        'classes':     CLASSES_4,
+        'num_classes': 4,
+        'arch':        'vgg16'
+    },
+    {
+        'name':        'ResNet50 4-class (transfer)',
+        'weights':     f"{WEIGHTS_DIR}/resnet50_4class.pth",
+        'classes':     CLASSES_4,
+        'num_classes': 4,
         'arch':        'resnet50'
     },
 ]
@@ -145,12 +168,20 @@ def get_transform():
 
 
 def build_model(arch, num_classes, weights_path, device):
-    if arch == 'vgg16':
-        m = models.vgg16(weights=None)
+    """Build and load model — supports AlexNet, VGG16, ResNet50."""
+    if arch == 'alexnet':
+        # AlexNet: same classifier structure as VGG16
+        m = alexnet(weights=None)
         m.classifier[6] = nn.Linear(4096, num_classes)
-    else:
-        m = models.resnet50(weights=None)
+    elif arch == 'vgg16':
+        m = vgg16(weights=None)
+        m.classifier[6] = nn.Linear(4096, num_classes)
+    elif arch == 'resnet50':
+        m = resnet50(weights=None)
         m.fc = nn.Linear(2048, num_classes)
+    else:
+        raise ValueError(f"Unknown architecture: {arch}")
+
     m.load_state_dict(torch.load(weights_path, map_location=device))
     m.eval()
     return m.to(device)
@@ -159,9 +190,8 @@ def build_model(arch, num_classes, weights_path, device):
 def apply_temperature(raw_output, temperature=1.0):
     """
     Temperature scaling — divides raw logits before softmax.
-    T=1.0 → standard softmax (overconfident for trained models)
-    T>1.0 → softer probabilities, more variance expressed
-    T<1.0 → even more confident (rarely useful)
+    T=1.0 → standard softmax (overconfident)
+    T>1.0 → more calibrated, spreads probability mass
     """
     scaled = torch.tensor(raw_output) / temperature
     return torch.softmax(scaled, dim=0).numpy()
@@ -169,6 +199,8 @@ def apply_temperature(raw_output, temperature=1.0):
 
 def run_prediction(image_path, model, transform, device,
                    classes, temperature=1.0):
+    """Run inference on a single image, return both standard
+    and temperature-scaled probabilities."""
     try:
         image = Image.open(image_path).convert('RGB')
     except Exception as e:
@@ -179,19 +211,14 @@ def run_prediction(image_path, model, transform, device,
     with torch.no_grad():
         raw_output = model(tensor)[0].cpu().numpy()
 
-    # Standard softmax (T=1.0)
-    probs_standard = apply_temperature(raw_output, temperature=1.0)
+    probs_std = apply_temperature(raw_output, temperature=1.0)
+    probs_cal = apply_temperature(raw_output, temperature=temperature)
 
-    # Temperature scaled
-    probs_calibrated = apply_temperature(raw_output, temperature=temperature)
-
-    # Prediction based on calibrated probs
-    # (same winner as standard — temperature never changes the ranking)
-    pred_idx   = int(probs_calibrated.argmax())
+    pred_idx   = int(probs_cal.argmax())
     prediction = classes[pred_idx]
 
-    return prediction, probs_standard.tolist(), \
-           probs_calibrated.tolist(), None
+    return prediction, probs_std.tolist(), \
+           probs_cal.tolist(), None
 
 
 def collect_images(args):
@@ -210,7 +237,7 @@ def collect_images(args):
 
 
 # ─────────────────────────────────────────
-# TERMINAL OUTPUT
+# TERMINAL OUTPUT — single model
 # ─────────────────────────────────────────
 def print_result(image_path, prediction, probs_std,
                  probs_cal, classes, temperature):
@@ -221,26 +248,18 @@ def print_result(image_path, prediction, probs_std,
     print(f"\n{'='*65}")
     print(f"Image:       {filename}")
     print(f"Diagnosis:   {prediction}")
-    print(f"Confidence:  {confidence:.4%} "
-          f"(temperature={temperature})")
+    print(f"Confidence:  {confidence:.4%} (T={temperature})")
     print(f"Urgency:     {urgency_label}")
     print(f"\nMeaning:")
     print(f"  {DESCRIPTIONS[prediction]}")
-
     print(f"\n{'─'*65}")
-    print(f"{'Class':<12} {'Standard (T=1)':<18} {'Calibrated (T='
-          f"{temperature})":<20} {'Raw logit'}")
+    print(f"{'Class':<12} {'Standard (T=1)':<18} "
+          f"{'Calibrated (T=' + str(temperature) + ')'}")
     print(f"{'─'*65}")
-
     for i, cls in enumerate(classes):
-        std  = probs_std[i]
-        cal  = probs_cal[i]
         marker = ' ←' if cls == prediction else ''
-        print(f"{cls:<12} {std:<18.4%} {cal:<20.4%}{marker}")
-
-    print(f"\nNote: Temperature scaling (T={temperature}) redistributes")
-    print(f"      probability mass without changing the prediction.")
-    print(f"      Standard softmax (T=1) often shows false 100% confidence.")
+        print(f"{cls:<12} {probs_std[i]:<18.4%} "
+              f"{probs_cal[i]:.4%}{marker}")
     print(f"{'='*65}")
 
 
@@ -276,15 +295,14 @@ def save_visual(image_path, prediction, probs_std,
     except:
         return
 
-    # Sort by calibrated probability
     sorted_results = sorted(
         zip(classes, probs_std, probs_cal),
         key=lambda x: x[2]
     )
-    display_classes  = [r[0] for r in sorted_results]
-    display_std      = [r[1] for r in sorted_results]
-    display_cal      = [r[2] for r in sorted_results]
-    bar_colors       = [COLORS[c] for c in display_classes]
+    display_classes = [r[0] for r in sorted_results]
+    display_std     = [r[1] for r in sorted_results]
+    display_cal     = [r[2] for r in sorted_results]
+    bar_colors      = [COLORS[c] for c in display_classes]
 
     fig = plt.figure(figsize=(16, 7))
     fig.patch.set_facecolor('#1a1a2e')
@@ -300,18 +318,16 @@ def save_visual(image_path, prediction, probs_std,
     ax_std = fig.add_axes([0.33, 0.15, 0.22, 0.72])
     ax_std.set_facecolor('#16213e')
     bars = ax_std.barh(display_classes, display_std,
-                       color=bar_colors,
-                       edgecolor='white', linewidth=0.4,
-                       height=0.6)
+                       color=bar_colors, edgecolor='white',
+                       linewidth=0.4, height=0.6)
     for bar, prob in zip(bars, display_std):
         if prob > 0.005:
             ax_std.text(prob + 0.01,
                         bar.get_y() + bar.get_height()/2,
-                        f'{prob:.1%}',
-                        va='center', ha='left',
+                        f'{prob:.1%}', va='center', ha='left',
                         color='white', fontsize=9)
     ax_std.set_xlim(0, 1.25)
-    ax_std.set_title(f'Standard (T=1.0)\nOverconfident',
+    ax_std.set_title('Standard (T=1.0)\nOverconfident',
                      color='#ffaaaa', fontsize=10, pad=6)
     ax_std.set_xlabel('Probability', color='white', fontsize=9)
     ax_std.tick_params(colors='white', labelsize=8)
@@ -324,15 +340,13 @@ def save_visual(image_path, prediction, probs_std,
     ax_cal = fig.add_axes([0.58, 0.15, 0.22, 0.72])
     ax_cal.set_facecolor('#16213e')
     bars = ax_cal.barh(display_classes, display_cal,
-                       color=bar_colors,
-                       edgecolor='white', linewidth=0.4,
-                       height=0.6)
+                       color=bar_colors, edgecolor='white',
+                       linewidth=0.4, height=0.6)
     for bar, prob in zip(bars, display_cal):
         if prob > 0.005:
             ax_cal.text(prob + 0.01,
                         bar.get_y() + bar.get_height()/2,
-                        f'{prob:.1%}',
-                        va='center', ha='left',
+                        f'{prob:.1%}', va='center', ha='left',
                         color='white', fontsize=9)
     ax_cal.set_xlim(0, 1.25)
     ax_cal.set_title(f'Calibrated (T={temperature})\nMore honest',
@@ -348,36 +362,24 @@ def save_visual(image_path, prediction, probs_std,
     ax_info = fig.add_axes([0.83, 0.1, 0.15, 0.82])
     ax_info.set_facecolor(COLORS[prediction])
     ax_info.axis('off')
-
-    ax_info.text(0.5, 0.93, 'DIAGNOSIS',
-                color='white', fontsize=10,
-                ha='center', va='top',
-                transform=ax_info.transAxes,
-                fontweight='bold')
-    ax_info.text(0.5, 0.80, prediction,
-                color='white', fontsize=18,
-                ha='center', va='top',
-                transform=ax_info.transAxes,
-                fontweight='bold')
-    ax_info.text(0.5, 0.65, f'{confidence:.1%}',
-                color='white', fontsize=20,
-                ha='center', va='top',
-                transform=ax_info.transAxes,
-                fontweight='bold')
-    ax_info.text(0.5, 0.53, f'T={temperature}',
-                color='white', fontsize=9,
-                ha='center', va='top',
+    ax_info.text(0.5, 0.93, 'DIAGNOSIS', color='white',
+                fontsize=10, ha='center', va='top',
+                transform=ax_info.transAxes, fontweight='bold')
+    ax_info.text(0.5, 0.80, prediction, color='white',
+                fontsize=18, ha='center', va='top',
+                transform=ax_info.transAxes, fontweight='bold')
+    ax_info.text(0.5, 0.65, f'{confidence:.2%}', color='white',
+                fontsize=20, ha='center', va='top',
+                transform=ax_info.transAxes, fontweight='bold')
+    ax_info.text(0.5, 0.53, f'T={temperature}', color='white',
+                fontsize=9, ha='center', va='top',
                 transform=ax_info.transAxes, alpha=0.8)
-    ax_info.text(0.5, 0.43, 'URGENCY',
-                color='white', fontsize=9,
-                ha='center', va='top',
-                transform=ax_info.transAxes,
-                fontweight='bold')
-    ax_info.text(0.5, 0.34, urgency_label,
-                color='white', fontsize=13,
-                ha='center', va='top',
-                transform=ax_info.transAxes,
-                fontweight='bold')
+    ax_info.text(0.5, 0.43, 'URGENCY', color='white',
+                fontsize=9, ha='center', va='top',
+                transform=ax_info.transAxes, fontweight='bold')
+    ax_info.text(0.5, 0.34, urgency_label, color='white',
+                fontsize=13, ha='center', va='top',
+                transform=ax_info.transAxes, fontweight='bold')
 
     desc  = DESCRIPTIONS[prediction]
     words = desc.split()
@@ -391,8 +393,7 @@ def save_visual(image_path, prediction, probs_std,
     if current:
         lines.append(current)
     ax_info.text(0.5, 0.22, '\n'.join(lines[:8]),
-                color='white', fontsize=7,
-                ha='center', va='top',
+                color='white', fontsize=7, ha='center', va='top',
                 transform=ax_info.transAxes, alpha=0.9)
 
     fig.text(0.5, 0.97,
@@ -484,15 +485,17 @@ def compare_all_models(image_path, device, transform, temperature):
             for n in names:
                 print(f"    → {n}")
 
-    print(f"\nConfidence range (standard): "
-          f"{min(r['conf_std'] for r in results):.4%} — "
-          f"{max(r['conf_std'] for r in results):.4%}")
-    print(f"Confidence range (T={temperature}):   "
-          f"{min(r['conf_cal'] for r in results):.4%} — "
-          f"{max(r['conf_cal'] for r in results):.4%}")
-    print(f"\nKey insight: Standard softmax (T=1) amplifies any")
-    print(f"dominant raw score to near-100%. Temperature scaling")
-    print(f"(T={temperature}) reveals the true uncertainty beneath.")
+    if results:
+        print(f"\nConfidence range (T=1):   "
+              f"{min(r['conf_std'] for r in results):.4%} — "
+              f"{max(r['conf_std'] for r in results):.4%}")
+        print(f"Confidence range (T={temperature}): "
+              f"{min(r['conf_cal'] for r in results):.4%} — "
+              f"{max(r['conf_cal'] for r in results):.4%}")
+        print(f"Raw score range:  "
+              f"{min(r['raw_score'] for r in results):.4f} — "
+              f"{max(r['raw_score'] for r in results):.4f}")
+
     print(f"{'='*75}\n")
 
     save_comparison_visual(image_path, results, temperature)
@@ -521,13 +524,12 @@ def save_comparison_visual(image_path, results, temperature):
              ha='center', color='white',
              fontsize=13, fontweight='bold')
     fig.text(0.5, 0.95,
-             f'Left bars: Standard softmax (T=1.0)  |  '
-             f'Right bars: Temperature scaled (T={temperature})  |  '
+             f'Left: Standard (T=1.0)  |  '
+             f'Right: Calibrated (T={temperature})  |  '
              f'OCT Retinal Disease Classifier — SJSU AI HUB',
              ha='center', color='#aaaacc', fontsize=9)
 
-    # Original image
-    ax_img = fig.add_axes([0.01, 0.04, 0.16, 0.88])
+    ax_img = fig.add_axes([0.01, 0.04, 0.14, 0.88])
     ax_img.imshow(original)
     ax_img.axis('off')
     ax_img.set_title('Input Image', color='white',
@@ -536,51 +538,46 @@ def save_comparison_visual(image_path, results, temperature):
     row_height = 0.88 / n_models
 
     for idx, result in enumerate(results):
-        y_pos   = 0.04 + (n_models - 1 - idx) * row_height
-        classes = result['classes']
-        pred    = result['prediction']
-        conf_std = result['conf_std']
-        conf_cal = result['conf_cal']
+        y_pos      = 0.04 + (n_models - 1 - idx) * row_height
+        classes    = result['classes']
+        pred       = result['prediction']
+        conf_std   = result['conf_std']
+        conf_cal   = result['conf_cal']
+        bar_colors = [COLORS.get(c, '#555555') for c in classes]
 
-        # Model label
-        ax_label = fig.add_axes([0.19, y_pos + 0.005,
-                                  0.12, row_height - 0.01])
-        ax_label.set_facecolor(COLORS[pred])
+        # Label card
+        ax_label = fig.add_axes([0.17, y_pos + 0.005,
+                                  0.10, row_height - 0.01])
+        ax_label.set_facecolor(COLORS.get(pred, '#555555'))
         ax_label.axis('off')
-        ax_label.text(0.5, 0.70, result['name'],
-                     color='white', fontsize=7.5,
+        ax_label.text(0.5, 0.72, result['name'],
+                     color='white', fontsize=7,
                      ha='center', va='center',
                      transform=ax_label.transAxes,
                      fontweight='bold')
-        ax_label.text(0.5, 0.38, pred,
+        ax_label.text(0.5, 0.42, pred,
                      color='white', fontsize=11,
                      ha='center', va='center',
                      transform=ax_label.transAxes,
                      fontweight='bold')
-        ax_label.text(0.5, 0.12,
-                     f'T=1: {conf_std:.1%}  →  '
-                     f'T={temperature}: {conf_cal:.1%}',
-                     color='white', fontsize=7,
+        ax_label.text(0.5, 0.14,
+                     f'T=1: {conf_std:.1%} → T={temperature}: {conf_cal:.1%}',
+                     color='white', fontsize=6.5,
                      ha='center', va='center',
                      transform=ax_label.transAxes)
 
-        bar_colors = [COLORS.get(c, '#555555') for c in classes]
-
         # Standard probs
-        ax_std = fig.add_axes([0.33, y_pos + 0.005,
-                                0.29, row_height - 0.01])
+        ax_std = fig.add_axes([0.29, y_pos + 0.005,
+                                0.33, row_height - 0.01])
         ax_std.set_facecolor('#16213e')
-        bars_s = ax_std.barh(classes,
-                             result['probs_std'],
-                             color=bar_colors,
-                             edgecolor='#333366',
+        bars_s = ax_std.barh(classes, result['probs_std'],
+                             color=bar_colors, edgecolor='#333366',
                              linewidth=0.3, height=0.55)
         for bar, prob in zip(bars_s, result['probs_std']):
             if prob > 0.005:
                 ax_std.text(prob + 0.01,
                            bar.get_y() + bar.get_height()/2,
-                           f'{prob:.1%}',
-                           va='center', ha='left',
+                           f'{prob:.1%}', va='center', ha='left',
                            color='white', fontsize=7)
         ax_std.set_xlim(0, 1.3)
         ax_std.tick_params(colors='white', labelsize=7)
@@ -596,17 +593,14 @@ def save_comparison_visual(image_path, results, temperature):
         ax_cal = fig.add_axes([0.64, y_pos + 0.005,
                                 0.34, row_height - 0.01])
         ax_cal.set_facecolor('#16213e')
-        bars_c = ax_cal.barh(classes,
-                             result['probs_cal'],
-                             color=bar_colors,
-                             edgecolor='#333366',
+        bars_c = ax_cal.barh(classes, result['probs_cal'],
+                             color=bar_colors, edgecolor='#333366',
                              linewidth=0.3, height=0.55)
         for bar, prob in zip(bars_c, result['probs_cal']):
             if prob > 0.005:
                 ax_cal.text(prob + 0.01,
                            bar.get_y() + bar.get_height()/2,
-                           f'{prob:.1%}',
-                           va='center', ha='left',
+                           f'{prob:.1%}', va='center', ha='left',
                            color='white', fontsize=7)
         ax_cal.set_xlim(0, 1.3)
         ax_cal.tick_params(colors='white', labelsize=7)
@@ -624,6 +618,74 @@ def save_comparison_visual(image_path, results, temperature):
     plt.close()
     print(f"  Comparison visual saved: {save_path}")
 
+def compare_all_images(device, transform, temperature):
+    """Run all test images through all models and save results."""
+    if not os.path.exists(TEST_IMAGES):
+        print(f"ERROR: test_images/ not found at {TEST_IMAGES}")
+        return
+
+    image_paths = collect_images([TEST_IMAGES])
+    if not image_paths:
+        print("No images found in test_images/")
+        return
+
+    print(f"\nRunning {len(image_paths)} images through "
+          f"{len(MODEL_CONFIGS)} models...")
+    print(f"Temperature: {temperature}")
+
+    # Summary table header
+    model_names = [c['name'] for c in MODEL_CONFIGS
+                   if os.path.exists(c['weights'])]
+
+    print(f"\n{'='*120}")
+    print(f"FULL COMPARISON — ALL IMAGES × ALL MODELS")
+    print(f"{'='*120}")
+    header = f"{'Image':<35}"
+    for name in model_names:
+        header += f" {name[:20]:<22}"
+    print(header)
+    print(f"{'-'*120}")
+
+    for image_path in image_paths:
+        filename = os.path.basename(image_path)
+        row = f"{filename:<35}"
+
+        for config in MODEL_CONFIGS:
+            if not os.path.exists(config['weights']):
+                continue
+            try:
+                m = build_model(
+                    config['arch'],
+                    config['num_classes'],
+                    config['weights'],
+                    device
+                )
+                image  = Image.open(image_path).convert('RGB')
+                tensor = transform(image).unsqueeze(0).to(device)
+
+                with torch.no_grad():
+                    raw_out = m(tensor)[0].cpu().numpy()
+
+                probs_cal  = apply_temperature(raw_out, temperature)
+                pred_idx   = int(probs_cal.argmax())
+                prediction = config['classes'][pred_idx]
+                confidence = probs_cal[pred_idx]
+
+                cell = f"{prediction} {confidence:.0%}"
+                row += f" {cell:<22}"
+
+            except Exception as e:
+                row += f" {'ERROR':<22}"
+
+        print(row)
+
+        # Also save individual comparison visual for each image
+        print(f"  Generating comparison visual for {filename}...")
+        compare_all_models(image_path, device, transform, temperature)
+
+    print(f"{'='*120}")
+    print(f"\n✓ All comparison visuals saved to {RESULTS_DIR}")
+
 
 # ─────────────────────────────────────────
 # MAIN
@@ -632,7 +694,7 @@ def main():
     device    = get_device()
     transform = get_transform()
 
-    # Parse temperature argument
+    # Parse temperature
     temperature = DEFAULT_TEMP
     if '--temp' in sys.argv:
         idx = sys.argv.index('--temp')
@@ -641,12 +703,10 @@ def main():
             sys.argv.pop(idx + 1)
             sys.argv.pop(idx)
         except (IndexError, ValueError):
-            print(f"Invalid --temp value. Using default T={DEFAULT_TEMP}")
+            print(f"Invalid --temp. Using default T={DEFAULT_TEMP}")
 
-    print(f"OCT Retinal Disease Classifier")
-    print(f"Using device: {device}")
-    print(f"Temperature:  {temperature} "
-          f"(T=1.0=standard, higher=more calibrated)")
+    print(f"OCT Retinal Disease Classifier — SJSU AI HUB")
+    print(f"Device: {device} | Temperature: {temperature}")
 
     # ── Compare mode ──────────────────────
     if '--compare' in sys.argv:
@@ -661,16 +721,21 @@ def main():
             sys.exit(1)
         compare_all_models(image_path, device, transform, temperature)
         sys.exit(0)
+    # ── Compare all mode ──────────────────────
+    if '--compare-all' in sys.argv:
+        compare_all_images(device, transform, temperature)
+        sys.exit(0)
 
     # ── Standard inference ─────────────────
     print(f"Model: VGG16 5-class (transfer learning)")
 
-    if not os.path.exists(WEIGHTS_PATH):
-        print(f"ERROR: Weights not found at {WEIGHTS_PATH}")
+    if not os.path.exists(DEFAULT_WEIGHTS):
+        print(f"ERROR: Weights not found at {DEFAULT_WEIGHTS}")
         print("Run models/vgg16_5class_train.py first.")
         sys.exit(1)
 
-    model = build_model('vgg16', 5, WEIGHTS_PATH, device)
+    model = build_model(DEFAULT_ARCH, DEFAULT_CLASSES,
+                        DEFAULT_WEIGHTS, device)
 
     if len(sys.argv) < 2 or sys.argv[1] == '--test':
         if os.path.exists(TEST_IMAGES):
@@ -679,14 +744,10 @@ def main():
         else:
             print("No images specified and test_images/ not found.")
             print("\nUsage:")
-            print("  Single:    python inference/inference.py image.jpg")
-            print("  Multiple:  python inference/inference.py i1.jpg i2.jpg")
-            print("  Folder:    python inference/inference.py folder/")
-            print("  Test:      python inference/inference.py --test")
-            print("  Compare:   python inference/inference.py "
-                  "--compare image.jpg")
-            print("  Temp:      python inference/inference.py "
-                  "--temp 3.0 image.jpg")
+            print("  python inference/inference.py image.jpg")
+            print("  python inference/inference.py --test")
+            print("  python inference/inference.py --compare image.jpg")
+            print("  python inference/inference.py --temp 5.0 --compare image.jpg")
             sys.exit(0)
     else:
         image_paths = collect_images(sys.argv[1:])
@@ -715,6 +776,8 @@ def main():
 
     if len(image_paths) > 1:
         print_batch_summary(results)
+
+
 
 
 if __name__ == '__main__':
