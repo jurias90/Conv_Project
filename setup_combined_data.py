@@ -41,10 +41,10 @@ COMBINED     = f"{BASE}/combined_data"
 SAMPLES_PER_SOURCE = {
     'chest_xray':    5000,
     'cifar10':       5000,
-    'fundus':        None,   # ~3,662 — use all
+    'fundus':        None,
     'skin':          5000,
-    'imagenet_mini': 5000,
-    'coco':          5000,
+    'imagenet_mini': 0,
+    'coco':          0,
 }
 
 # Supported image extensions
